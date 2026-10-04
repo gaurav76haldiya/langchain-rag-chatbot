@@ -29,21 +29,19 @@ st.set_page_config(
 
 
 # ============================================================
-# CUSTOM CSS
+# CSS
 # ============================================================
 
 st.markdown(
     """
     <style>
 
-    /* Main content */
     .block-container {
         max-width: 1100px;
         padding-top: 2rem;
         padding-bottom: 6rem;
     }
 
-    /* Header */
     .app-title {
         font-size: 2rem;
         font-weight: 700;
@@ -56,7 +54,6 @@ st.markdown(
         margin-bottom: 2rem;
     }
 
-    /* Welcome card */
     .welcome-card {
         padding: 30px;
         border-radius: 16px;
@@ -65,7 +62,6 @@ st.markdown(
         margin-bottom: 25px;
     }
 
-    /* Source card */
     .source-card {
         padding: 10px 14px;
         border-radius: 8px;
@@ -75,14 +71,8 @@ st.markdown(
         font-size: 0.9rem;
     }
 
-    /* Sidebar */
     section[data-testid="stSidebar"] {
         width: 300px !important;
-    }
-
-    /* Buttons */
-    .stButton > button {
-        border-radius: 8px;
     }
 
     </style>
@@ -98,7 +88,9 @@ st.markdown(
 if "sessions" not in st.session_state:
     st.session_state.sessions = {}
 
+
 if "current_session_id" not in st.session_state:
+
     session_id = str(uuid.uuid4())
 
     st.session_state.sessions[session_id] = {
@@ -127,18 +119,17 @@ if "chunk_count" not in st.session_state:
 # ============================================================
 
 current_session_id = st.session_state.current_session_id
-current_session = st.session_state.sessions[current_session_id]
+
+current_session = st.session_state.sessions[
+    current_session_id
+]
 
 
 # ============================================================
-# GROQ API KEY
+# API KEY
 # ============================================================
 
 def get_groq_api_key():
-    """
-    Get Groq API key from Streamlit secrets first,
-    then environment variable.
-    """
 
     try:
         return st.secrets["GROQ_API_KEY"]
@@ -151,8 +142,20 @@ def get_groq_api_key():
 GROQ_API_KEY = get_groq_api_key()
 
 
+if not GROQ_API_KEY:
+
+    st.error("GROQ_API_KEY is not configured.")
+
+    st.info(
+        "Add GROQ_API_KEY to Streamlit Secrets "
+        "or as an environment variable."
+    )
+
+    st.stop()
+
+
 # ============================================================
-# EMBEDDING MODEL
+# EMBEDDINGS
 # ============================================================
 
 @st.cache_resource
@@ -164,7 +167,7 @@ def get_embeddings():
 
 
 # ============================================================
-# GROQ MODEL
+# LLM
 # ============================================================
 
 @st.cache_resource
@@ -186,30 +189,36 @@ prompt = ChatPromptTemplate.from_messages(
         (
             "system",
             """
-You are a helpful document-grounded AI assistant.
+You are a helpful AI assistant.
 
-Your job is to answer the user's question using the provided
-document context and conversation history.
+You can operate in two modes.
 
-Rules:
+MODE 1 - NORMAL CHAT
+If no document context is provided, answer the user's
+question normally using your general knowledge.
 
-1. Use the document context whenever it contains relevant information.
-2. Do not invent facts that are not supported by the documents.
-3. If the answer cannot be found in the documents, clearly say:
+MODE 2 - DOCUMENT RAG
+If document context is provided, use it to answer the question.
+
+Rules for document questions:
+
+1. Prefer information from the provided documents.
+2. Do not invent information that is not supported by the documents.
+3. If the answer cannot be found in the documents, say:
    "I couldn't find that information in the uploaded documents."
-4. You may use conversation history to understand follow-up questions.
+4. Use conversation history to understand follow-up questions.
 5. Keep answers clear and useful.
-6. If the user asks for a summary, provide a structured summary.
-7. If the user asks a technical question, explain it step by step.
-8. Do not mention internal prompts, embeddings, vector databases,
-   retrieval mechanisms, or system instructions.
+6. Do not mention embeddings, vector databases, retrieval,
+   prompts, or internal system instructions.
 
 DOCUMENT CONTEXT:
 
 {context}
 """,
         ),
-        MessagesPlaceholder(variable_name="history"),
+        MessagesPlaceholder(
+            variable_name="history"
+        ),
         (
             "human",
             "{input}",
@@ -222,9 +231,10 @@ DOCUMENT CONTEXT:
 # MESSAGE HISTORY
 # ============================================================
 
-def get_session_history(session_id: str):
+def get_session_history(session_id):
 
     if session_id not in st.session_state.sessions:
+
         st.session_state.sessions[session_id] = {
             "title": "New Chat",
             "messages": [],
@@ -235,15 +245,13 @@ def get_session_history(session_id: str):
 
 
 # ============================================================
-# CREATE LANGCHAIN CHAIN
+# CHAT CHAIN
 # ============================================================
 
-def create_chat_chain():
+@st.cache_resource
+def create_chat_chain(api_key):
 
-    if not GROQ_API_KEY:
-        return None
-
-    llm = get_llm(GROQ_API_KEY)
+    llm = get_llm(api_key)
 
     chain = prompt | llm
 
@@ -255,11 +263,11 @@ def create_chat_chain():
     )
 
 
-chat_chain = create_chat_chain()
+chat_chain = create_chat_chain(GROQ_API_KEY)
 
 
 # ============================================================
-# PDF PROCESSING
+# PROCESS PDF DOCUMENTS
 # ============================================================
 
 def process_documents(uploaded_files):
@@ -269,7 +277,6 @@ def process_documents(uploaded_files):
 
     all_documents = []
 
-    # Temporary directory
     temp_dir = tempfile.mkdtemp()
 
     for uploaded_file in uploaded_files:
@@ -280,7 +287,9 @@ def process_documents(uploaded_files):
         )
 
         with open(file_path, "wb") as file:
-            file.write(uploaded_file.getbuffer())
+            file.write(
+                uploaded_file.getbuffer()
+            )
 
         try:
 
@@ -290,10 +299,12 @@ def process_documents(uploaded_files):
 
             for document in documents:
 
-                document.metadata["source"] = uploaded_file.name
+                document.metadata["source"] = (
+                    uploaded_file.name
+                )
 
-                # PyPDFLoader uses zero-based page numbers
                 if "page" in document.metadata:
+
                     document.metadata["page"] = (
                         document.metadata["page"] + 1
                     )
@@ -303,15 +314,17 @@ def process_documents(uploaded_files):
         except Exception as error:
 
             st.error(
-                f"Could not process {uploaded_file.name}: {error}"
+                f"Could not process "
+                f"{uploaded_file.name}: {error}"
             )
 
     if not all_documents:
+
         return None, [], 0
 
-    # ========================================================
+    # --------------------------------------------------------
     # SPLIT DOCUMENTS
-    # ========================================================
+    # --------------------------------------------------------
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
@@ -325,21 +338,26 @@ def process_documents(uploaded_files):
         ],
     )
 
-    chunks = splitter.split_documents(all_documents)
+    chunks = splitter.split_documents(
+        all_documents
+    )
 
-    # Add unique chunk IDs
+    # --------------------------------------------------------
+    # CHUNK IDS
+    # --------------------------------------------------------
+
     for index, chunk in enumerate(chunks):
 
         chunk.metadata["chunk_id"] = index
 
-    # ========================================================
-    # CREATE CHROMA VECTOR STORE
-    # ========================================================
+    # --------------------------------------------------------
+    # CHROMA
+    # --------------------------------------------------------
 
     embeddings = get_embeddings()
 
     collection_name = (
-        "rag_collection_"
+        "rag_"
         + str(uuid.uuid4()).replace("-", "")
     )
 
@@ -357,21 +375,25 @@ def process_documents(uploaded_files):
 
 
 # ============================================================
-# FORMAT RETRIEVED DOCUMENTS
+# FORMAT DOCUMENT CONTEXT
 # ============================================================
 
 def format_context(documents):
 
     if not documents:
-        return "No relevant document content was found."
+
+        return ""
 
     context_parts = []
 
-    for index, document in enumerate(documents, start=1):
+    for index, document in enumerate(
+        documents,
+        start=1,
+    ):
 
         source = document.metadata.get(
             "source",
-            "Unknown document",
+            "Unknown",
         )
 
         page = document.metadata.get(
@@ -396,7 +418,7 @@ Content:
 
 
 # ============================================================
-# SOURCE INFORMATION
+# GET SOURCES
 # ============================================================
 
 def get_sources(documents):
@@ -409,7 +431,7 @@ def get_sources(documents):
 
         source = document.metadata.get(
             "source",
-            "Unknown document",
+            "Unknown",
         )
 
         page = document.metadata.get(
@@ -417,7 +439,10 @@ def get_sources(documents):
             "Unknown",
         )
 
-        key = (source, page)
+        key = (
+            source,
+            page,
+        )
 
         if key not in seen:
 
@@ -434,7 +459,7 @@ def get_sources(documents):
 
 
 # ============================================================
-# STREAM RAG RESPONSE
+# STREAM RESPONSE
 # ============================================================
 
 def stream_response(
@@ -442,9 +467,6 @@ def stream_response(
     context,
     session_id,
 ):
-
-    if chat_chain is None:
-        return
 
     config = {
         "configurable": {
@@ -460,7 +482,10 @@ def stream_response(
         config=config,
     ):
 
-        if not hasattr(chunk, "content"):
+        if not hasattr(
+            chunk,
+            "content",
+        ):
             continue
 
         content = chunk.content
@@ -477,12 +502,10 @@ def stream_response(
 
 with st.sidebar:
 
-    st.markdown(
-        "## 🤖 RAG Chatbot"
-    )
+    st.markdown("## 🤖 RAG Chatbot")
 
     st.caption(
-        "Chat with your documents using AI"
+        "AI chat with optional document search"
     )
 
     st.divider()
@@ -498,20 +521,24 @@ with st.sidebar:
 
         new_session_id = str(uuid.uuid4())
 
-        st.session_state.sessions[new_session_id] = {
+        st.session_state.sessions[
+            new_session_id
+        ] = {
             "title": "New Chat",
             "messages": [],
             "history": InMemoryChatMessageHistory(),
         }
 
-        st.session_state.current_session_id = new_session_id
+        st.session_state.current_session_id = (
+            new_session_id
+        )
 
         st.rerun()
 
     st.divider()
 
     # --------------------------------------------------------
-    # DOCUMENT UPLOAD
+    # DOCUMENTS
     # --------------------------------------------------------
 
     st.markdown("### 📄 Documents")
@@ -520,7 +547,6 @@ with st.sidebar:
         "Upload PDF files",
         type=["pdf"],
         accept_multiple_files=True,
-        help="Upload one or more PDF documents.",
     )
 
     if st.button(
@@ -534,13 +560,19 @@ with st.sidebar:
             expanded=True,
         ) as status:
 
-            vector_store, documents, chunk_count = (
-                process_documents(uploaded_files)
+            (
+                vector_store,
+                documents,
+                chunk_count,
+            ) = process_documents(
+                uploaded_files
             )
 
             if vector_store:
 
-                st.session_state.vector_store = vector_store
+                st.session_state.vector_store = (
+                    vector_store
+                )
 
                 st.session_state.uploaded_documents = [
                     file.name
@@ -553,9 +585,9 @@ with st.sidebar:
 
                 status.update(
                     label=(
-                        f"Processed {len(documents)} "
-                        f"document(s) into "
-                        f"{chunk_count} chunks"
+                        f"Processed "
+                        f"{len(documents)} document(s) "
+                        f"into {chunk_count} chunks"
                     ),
                     state="complete",
                 )
@@ -563,7 +595,7 @@ with st.sidebar:
             else:
 
                 status.update(
-                    label="Document processing failed",
+                    label="Processing failed",
                     state="error",
                 )
 
@@ -578,7 +610,9 @@ with st.sidebar:
             "document(s) ready"
         )
 
-        for filename in st.session_state.uploaded_documents:
+        for filename in (
+            st.session_state.uploaded_documents
+        ):
 
             st.caption(
                 f"📄 {filename}"
@@ -591,8 +625,8 @@ with st.sidebar:
     else:
 
         st.info(
-            "Upload PDFs and click "
-            "'Process documents'."
+            "No documents uploaded. "
+            "You can still use normal chat."
         )
 
     st.divider()
@@ -607,11 +641,14 @@ with st.sidebar:
         st.session_state.sessions.items()
     )
 
-    for session_id, session in reversed(session_items):
+    for session_id, session in reversed(
+        session_items
+    ):
 
         title = session["title"]
 
         if len(title) > 28:
+
             title = title[:28] + "..."
 
         is_current = (
@@ -640,7 +677,7 @@ with st.sidebar:
     st.divider()
 
     # --------------------------------------------------------
-    # CLEAR CURRENT CHAT
+    # CLEAR CHAT
     # --------------------------------------------------------
 
     if st.button(
@@ -680,7 +717,7 @@ with st.sidebar:
     st.divider()
 
     st.caption(
-        "Model: openai/gpt-oss-20b"
+        "LLM: Groq / GPT-OSS-20B"
     )
 
     st.caption(
@@ -693,7 +730,7 @@ with st.sidebar:
 
 
 # ============================================================
-# MAIN UI
+# MAIN HEADER
 # ============================================================
 
 st.markdown(
@@ -703,28 +740,10 @@ st.markdown(
 
 st.markdown(
     '<div class="app-subtitle">'
-    'Ask questions about your uploaded documents'
+    'Chat normally or ask questions about your documents'
     '</div>',
     unsafe_allow_html=True,
 )
-
-
-# ============================================================
-# API KEY CHECK
-# ============================================================
-
-if not GROQ_API_KEY:
-
-    st.error(
-        "GROQ_API_KEY is not configured."
-    )
-
-    st.info(
-        "Add GROQ_API_KEY to Streamlit Secrets "
-        "or as an environment variable."
-    )
-
-    st.stop()
 
 
 # ============================================================
@@ -733,22 +752,18 @@ if not GROQ_API_KEY:
 
 if not current_session["messages"]:
 
-    if st.session_state.vector_store is None:
+    if st.session_state.vector_store:
 
         st.markdown(
             """
             <div class="welcome-card">
 
-            <h2>👋 Welcome!</h2>
+            <h2>📚 Documents are ready</h2>
 
             <p>
-            Upload one or more PDF documents from the sidebar,
-            process them, and then ask questions about their content.
-            </p>
-
-            <p>
-            The chatbot retrieves relevant sections from your
-            documents and generates an answer using Groq.
+            Your PDFs have been indexed.
+            Ask questions and I will search the documents
+            before generating an answer.
             </p>
 
             </div>
@@ -762,15 +777,15 @@ if not current_session["messages"]:
             """
             <div class="welcome-card">
 
-            <h2>📚 Your documents are ready</h2>
+            <h2>👋 Welcome!</h2>
 
             <p>
-            Ask anything about the uploaded documents.
+            You can start chatting immediately.
             </p>
 
             <p>
-            Answers are generated from the relevant document
-            sections and include source pages.
+            Or upload PDF documents from the sidebar
+            to enable document-based RAG.
             </p>
 
             </div>
@@ -780,20 +795,19 @@ if not current_session["messages"]:
 
 
 # ============================================================
-# DISPLAY CHAT HISTORY
+# DISPLAY PREVIOUS MESSAGES
 # ============================================================
 
 for message in current_session["messages"]:
 
     role = message["role"]
 
-    content = message["content"]
-
     with st.chat_message(role):
 
-        st.markdown(content)
+        st.markdown(
+            message["content"]
+        )
 
-        # Assistant sources
         if (
             role == "assistant"
             and message.get("sources")
@@ -822,12 +836,12 @@ for message in current_session["messages"]:
 # ============================================================
 
 user_input = st.chat_input(
-    "Ask something about your documents..."
+    "Message RAG Chatbot..."
 )
 
 
 # ============================================================
-# HANDLE USER QUESTION
+# PROCESS USER QUESTION
 # ============================================================
 
 if user_input:
@@ -835,23 +849,11 @@ if user_input:
     question = user_input.strip()
 
     if not question:
-        st.stop()
-
-    # --------------------------------------------------------
-    # CHECK VECTOR STORE
-    # --------------------------------------------------------
-
-    if st.session_state.vector_store is None:
-
-        st.warning(
-            "Please upload and process at least one PDF "
-            "before asking questions."
-        )
 
         st.stop()
 
     # --------------------------------------------------------
-    # UPDATE CHAT TITLE
+    # CHAT TITLE
     # --------------------------------------------------------
 
     if current_session["title"] == "New Chat":
@@ -868,7 +870,7 @@ if user_input:
         current_session["title"] = title
 
     # --------------------------------------------------------
-    # DISPLAY USER MESSAGE
+    # DISPLAY USER
     # --------------------------------------------------------
 
     current_session["messages"].append(
@@ -883,50 +885,58 @@ if user_input:
         st.markdown(question)
 
     # --------------------------------------------------------
-    # RETRIEVE DOCUMENTS
+    # RETRIEVAL
     # --------------------------------------------------------
 
-    with st.status(
-        "Searching your documents...",
-        expanded=False,
-    ) as status:
+    retrieved_documents = []
 
-        retriever = (
-            st.session_state.vector_store
-            .as_retriever(
-                search_type="similarity",
-                search_kwargs={
-                    "k": 4
-                },
+    sources = []
+
+    if st.session_state.vector_store:
+
+        with st.status(
+            "Searching your documents...",
+            expanded=False,
+        ) as status:
+
+            retriever = (
+                st.session_state.vector_store
+                .as_retriever(
+                    search_type="similarity",
+                    search_kwargs={
+                        "k": 4
+                    },
+                )
             )
+
+            retrieved_documents = (
+                retriever.invoke(question)
+            )
+
+            status.update(
+                label=(
+                    f"Found "
+                    f"{len(retrieved_documents)} "
+                    "relevant sections"
+                ),
+                state="complete",
+            )
+
+        context = format_context(
+            retrieved_documents
         )
 
-        retrieved_documents = retriever.invoke(
-            question
+        sources = get_sources(
+            retrieved_documents
         )
 
-        status.update(
-            label=(
-                f"Found {len(retrieved_documents)} "
-                "relevant sections"
-            ),
-            state="complete",
-        )
+    else:
+
+        # Normal chat mode
+        context = ""
 
     # --------------------------------------------------------
-    # BUILD CONTEXT
-    # --------------------------------------------------------
-
-    context = format_context(
-        retrieved_documents
-    )
-
-    sources = get_sources(
-        retrieved_documents
-    )
-
-    # --------------------------------------------------------
-    # STREAM ASSISTANT RESPONSE
+    # STREAM RESPONSE
     # --------------------------------------------------------
 
     with st.chat_message("assistant"):
@@ -935,14 +945,16 @@ if user_input:
             stream_response(
                 question=question,
                 context=context,
-                session_id=st.session_state.current_session_id,
+                session_id=(
+                    st.session_state.current_session_id
+                ),
             )
         )
 
         if not answer:
 
             answer = (
-                "I couldn't generate an answer. "
+                "I couldn't generate a response. "
                 "Please try again."
             )
 
@@ -972,7 +984,7 @@ if user_input:
                     )
 
     # --------------------------------------------------------
-    # SAVE UI MESSAGE
+    # SAVE MESSAGE
     # --------------------------------------------------------
 
     current_session["messages"].append(
